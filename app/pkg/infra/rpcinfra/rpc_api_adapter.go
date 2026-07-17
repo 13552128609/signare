@@ -10,6 +10,8 @@ import (
 type JSONRPCAPIAdapter interface {
 	// AdaptGenerateAccount adapts the generation of an Ethereum account.
 	AdaptGenerateAccount(ctx context.Context, data GenerateAccountRequestParams) (*string, *rpcerrors.RPCError)
+	// AdaptGenerateAccountsV2 adapts the generation of one ECDSA key-pair and optional PQ key-pairs.
+	AdaptGenerateAccountsV2(ctx context.Context, data GenerateAccountsV2RequestParams) (*GenerateAccountsV2Response, *rpcerrors.RPCError)
 	// AdaptRemoveAccount adapts the removal of an Ethereum account.
 	AdaptRemoveAccount(ctx context.Context, data RemoveAccountRequestParams) (*string, *rpcerrors.RPCError)
 	// AdaptListAccounts adapts the listing of all the Ethereum accounts in an Application.

@@ -7,7 +7,7 @@ database:
     scheme: 'postgres'
     database: 'db_signare'
     username: 'postgres'
-    password: 'postgres'
+    password: '123456'
     sslmode: 'disable'
 requestContext:
   userRequestHeader: 'X-Auth-RpcUserId'

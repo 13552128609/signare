@@ -19,6 +19,16 @@ const (
 	SoftHSMModuleKind ModuleKind = "SoftHSM"
 )
 
+// KeyGenerationKind describes the family of key generated.
+type KeyGenerationKind string
+
+const (
+	// KeyGenerationKindECDSA represents a classical ECDSA key (secp256k1).
+	KeyGenerationKindECDSA KeyGenerationKind = "ECDSA"
+	// KeyGenerationKindPQ represents a post-quantum key.
+	KeyGenerationKindPQ KeyGenerationKind = "PQ"
+)
+
 // CreateInput input data to create a new instance using the factory.
 type CreateInput struct {
 	ModuleKind ModuleKind
@@ -67,6 +77,33 @@ type SlotConnectionData struct {
 type GenerateAddressOutput struct {
 	// Address an Ethereum account to interact with the network.
 	Address address.Address `json:"address"`
+}
+
+// GeneratedKey represents a generated key (either ECDSA or PQ) returned by eth_generateAccountsV2.
+type GeneratedKey struct {
+	Type      KeyGenerationKind `json:"type"`
+	Algorithm string            `json:"algorithm"`
+	// Address is filled for ECDSA keys.
+	Address *address.Address `json:"address,omitempty"`
+	// PublicKey is filled for PQ keys.
+	PublicKey []byte `json:"publicKey,omitempty"`
+	// Label is an optional identifier for the key in the underlying HSM.
+	Label string `json:"label,omitempty"`
+}
+
+// GenerateKeysInput for multi-key generation requests (ECDSA + optional PQ keys).
+type GenerateKeysInput struct {
+	// SlotConnectionData configuration to connect to a slot.
+	SlotConnectionData
+	// PQ indicates whether PQ key-pairs should be generated in addition to the ECDSA key-pair.
+	PQ bool `valid:"-"`
+	// Algorithms is the list of PQ algorithms to use. Its length determines how many PQ key-pairs are generated.
+	Algorithms []string `valid:"-"`
+}
+
+// GenerateKeysOutput for multi-key generation responses.
+type GenerateKeysOutput struct {
+	Keys []GeneratedKey `json:"keys"`
 }
 
 // RemoveAddressInput for account removal requests.

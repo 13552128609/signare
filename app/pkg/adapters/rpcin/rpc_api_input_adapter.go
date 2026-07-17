@@ -42,6 +42,37 @@ func (adapter *DefaultAPIAdapter) AdaptGenerateAccount(ctx context.Context, data
 	return &response, nil
 }
 
+func (adapter *DefaultAPIAdapter) AdaptGenerateAccountsV2(ctx context.Context, data rpcinfra.GenerateAccountsV2RequestParams) (*rpcinfra.GenerateAccountsV2Response, *rpcerrors.RPCError) {
+	input := hsmconnection.ByApplicationInput{
+		ApplicationID: data.ApplicationID,
+	}
+	hsmConnection, err := adapter.hsmConnectionResolver.ByApplication(ctx, input)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	generateKeysInput := hsmconnector.GenerateKeysInput{
+		SlotConnectionData: hsmconnector.SlotConnectionData{
+			Pin:        hsmConnection.Pin,
+			Slot:       hsmConnection.Slot,
+			ModuleKind: hsmconnector.ModuleKind(hsmConnection.ModuleKind),
+			ChainID:    hsmConnection.ChainID,
+		},
+		PQ:         data.PQ,
+		Algorithms: data.Algorithms,
+	}
+
+	out, err := adapter.hsmConnector.GenerateKeys(ctx, generateKeysInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	response := rpcinfra.GenerateAccountsV2Response{
+		Keys: out.Keys,
+	}
+	return &response, nil
+}
+
 func (adapter *DefaultAPIAdapter) AdaptRemoveAccount(ctx context.Context, data rpcinfra.RemoveAccountRequestParams) (*string, *rpcerrors.RPCError) {
 	addr, err := address.NewFromHexString(data.Address)
 	if err != nil {

@@ -74,62 +74,80 @@ func (s *PKCS11HSMSignatureManager) GenerateKey(_ context.Context, input signatu
 	}
 	defer s.logOut(tracer, session)
 
-	ecParams := s.getEllipticCurveParameters()
-
-	timestamp := generateTimestampId()
-	lb := base64.StdEncoding.EncodeToString(timestamp)
-	publicKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
-		pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, ecParams),
-		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, false),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
-	}
-	timestamp = generateTimestampId()
-	lb = base64.StdEncoding.EncodeToString(timestamp)
-	privateKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_DERIVE, false),
-		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
+	// Default to ECDSA if no algorithm is provided.
+	alg := input.Algorithm
+	if alg == "" {
+		alg = signaturemanager.KeyAlgorithmECDSAsecp256k1
 	}
 
-	tracer.Debug("generating key pair")
-	publicKeyHandle, privateKeyHandle, err := s.pkcsContext.GenerateKeyPair(session,
-		[]*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_EC_KEY_PAIR_GEN, nil)},
-		publicKeyTemplate,
-		privateKeyTemplate)
-	if err != nil {
-		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("error generating key: %v", err))
-	}
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1:
+		ecParams := s.getEllipticCurveParameters()
 
-	tracer.Debug("getting address from public key")
-	addr, err := s.getAddress(session, publicKeyHandle)
-	if err != nil {
-		return nil, err
+		timestamp := generateTimestampId()
+		lb := base64.StdEncoding.EncodeToString(timestamp)
+		publicKeyTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
+			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+			pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, ecParams),
+			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, false),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
+			pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
+		}
+		timestamp = generateTimestampId()
+		lb = base64.StdEncoding.EncodeToString(timestamp)
+		privateKeyTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
+			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
+			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_DERIVE, false),
+			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
+			pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
+		}
+
+		tracer.Debug("generating key pair")
+		publicKeyHandle, privateKeyHandle, err := s.pkcsContext.GenerateKeyPair(session,
+			[]*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_EC_KEY_PAIR_GEN, nil)},
+			publicKeyTemplate,
+			privateKeyTemplate)
+		if err != nil {
+			return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("error generating key: %v", err))
+		}
+
+		tracer.Debug("getting address from public key")
+		addr, err := s.getAddress(session, publicKeyHandle)
+		if err != nil {
+			return nil, err
+		}
+		publicKeyLabel := calculatePublicKeyLabel(*addr)
+		tracer.Debugf("setting public key label for address '%s'", addr.String())
+		err = s.setLabel(session, publicKeyHandle, publicKeyLabel)
+		if err != nil {
+			tracer.Warn(fmt.Sprintf("failed to set the public key label for publicKeyHandle '%d'. Error: %v", publicKeyHandle, err))
+		}
+		privateKeyLabel := calculatePrivateKeyLabel(*addr)
+		tracer.Debugf("setting private key label for address '%s'", addr.String())
+		err = s.setLabel(session, privateKeyHandle, privateKeyLabel)
+		if err != nil {
+			tracer.Warn(fmt.Sprintf("failed to set the private key label for privateKeyHandle '%d'. Error: %v", privateKeyHandle, err))
+		}
+		return &signaturemanager.GenerateKeyOutput{
+			Address: *addr,
+			Label:   privateKeyLabel,
+		}, nil
+
+	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
+		// Placeholder for PQ algorithms using SoftHSMv2 via PKCS#11.
+		// The concrete mechanism IDs and templates must be provided by the PQ-enabled module.
+		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported PQ algorithm: %s", alg))
+
+	default:
+		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported algorithm: %s", alg))
 	}
-	publicKeyLabel := calculatePublicKeyLabel(*addr)
-	tracer.Debugf("setting public key label for address '%s'", addr.String())
-	err = s.setLabel(session, publicKeyHandle, publicKeyLabel)
-	if err != nil {
-		tracer.Warn(fmt.Sprintf("failed to set the public key label for publicKeyHandle '%d'. Error: %v", publicKeyHandle, err))
-	}
-	privateKeyLabel := calculatePrivateKeyLabel(*addr)
-	tracer.Debugf("setting private key label for address '%s'", addr.String())
-	err = s.setLabel(session, privateKeyHandle, privateKeyLabel)
-	if err != nil {
-		tracer.Warn(fmt.Sprintf("failed to set the private key label for privateKeyHandle '%d'. Error: %v", privateKeyHandle, err))
-	}
-	return &signaturemanager.GenerateKeyOutput{
-		Address: *addr,
-	}, nil
 }
 
 func (s *PKCS11HSMSignatureManager) RemoveKey(_ context.Context, input signaturemanager.RemoveKeyInput) (*signaturemanager.RemoveKeyOutput, error) {

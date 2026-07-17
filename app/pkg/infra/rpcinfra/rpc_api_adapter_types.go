@@ -3,12 +3,78 @@ package rpcinfra
 import (
 	"errors"
 	"fmt"
+
+	"github.com/hyperledger-labs/signare/app/pkg/usecases/hsmconnector"
 )
 
 // GenerateAccountRequestParams request definition
 type GenerateAccountRequestParams struct {
 	// ApplicationID requesting the Ethereum account generation.
 	ApplicationID string
+}
+
+// GenerateAccountsV2RequestParams request definition for eth_generateAccountsV2
+// It supports generating one ECDSA key-pair and optionally additional PQ key-pairs.
+type GenerateAccountsV2RequestParams struct {
+	// ApplicationID requesting the key generation.
+	ApplicationID string
+	// PQ indicates whether PQ key-pairs should be generated in addition to the ECDSA key-pair.
+	PQ bool `json:"pq"`
+	// Algorithms is the list of PQ algorithms to use. Its length determines how many PQ key-pairs are generated.
+	Algorithms []string `json:"algorithms,omitempty"`
+}
+
+// SetParamsFrom populates the struct from the raw JSON-RPC params.
+func (p *GenerateAccountsV2RequestParams) SetParamsFrom(params []any) error {
+	if len(params) == 0 {
+		// No additional parameters provided: leave PQ=false and Algorithms=nil.
+		return nil
+	}
+	if len(params) != 1 {
+		return fmt.Errorf("only one object is expected")
+	}
+	paramMap, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("params[0] must be an object")
+	}
+
+	if pqParam, ok := paramMap["pq"]; ok {
+		pq, okBool := pqParam.(bool)
+		if !okBool {
+			return errors.New("[pq] must be of type bool")
+		}
+		p.PQ = pq
+	}
+
+	if algParam, ok := paramMap["algorithms"]; ok {
+		algSlice, okSlice := algParam.([]any)
+		if !okSlice {
+			return errors.New("[algorithms] must be an array")
+		}
+		algorithms := make([]string, 0, len(algSlice))
+		for _, v := range algSlice {
+			alg, okStr := v.(string)
+			if !okStr {
+				return errors.New("[algorithms] elements must be of type string")
+			}
+			algorithms = append(algorithms, alg)
+		}
+		p.Algorithms = algorithms
+	}
+	return nil
+}
+
+// ValidateParams validates the GenerateAccountsV2RequestParams.
+func (p *GenerateAccountsV2RequestParams) ValidateParams() error {
+	// If PQ is false, algorithms is ignored.
+	// If PQ is true and no algorithms are provided, it's still acceptable
+	// (it will generate only one ECDSA key-pair).
+	return nil
+}
+
+// GenerateAccountsV2Response response definition for eth_generateAccountsV2
+type GenerateAccountsV2Response struct {
+	Keys []hsmconnector.GeneratedKey `json:"keys"`
 }
 
 // RemoveAccountRequestParams request definition

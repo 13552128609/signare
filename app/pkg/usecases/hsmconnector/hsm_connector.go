@@ -18,6 +18,8 @@ import (
 type HSMConnector interface {
 	// GenerateAddress generates a key pair in the underlying signature manager and returns the Ethereum address or an error if it fails.
 	GenerateAddress(ctx context.Context, input GenerateAddressInput) (*GenerateAddressOutput, error)
+	// GenerateKeys generates one ECDSA key-pair and, optionally, additional PQ key-pairs.
+	GenerateKeys(ctx context.Context, input GenerateKeysInput) (*GenerateKeysOutput, error)
 	// RemoveAddress removes the key pair associated with the given Ethereum address.
 	RemoveAddress(ctx context.Context, input RemoveAddressInput) (*RemoveAddressOutput, error)
 	// ListAddresses lists the addresses associated with their corresponding key pairs that exist in all the slots of an application.
@@ -76,6 +78,82 @@ func (d DefaultUseCase) GenerateAddress(ctx context.Context, input GenerateAddre
 	return &GenerateAddressOutput{
 		Address: generateKeyOutput.Address,
 	}, nil
+}
+
+// GenerateKeys generates one ECDSA key-pair and, if requested, additional PQ key-pairs.
+// Behaviour:
+//   - Always generates exactly one ECDSA(secp256k1) key-pair.
+//   - If input.PQ == true, it also generates len(input.Algorithms) PQ key-pairs,
+//     using each algorithm string provided.
+func (d DefaultUseCase) GenerateKeys(ctx context.Context, input GenerateKeysInput) (*GenerateKeysOutput, error) {
+	// Validate the slot connection data only. PQ/Algorithms are validated at business level.
+	_, err := govalidator.ValidateStruct(input.SlotConnectionData)
+	if err != nil {
+		return nil, errors.InvalidArgumentFromErr(err).SetHumanReadableMessage("couldn't validate input data")
+	}
+
+	tracer := logger.NewTracer(ctx)
+	tracer.AddProperty("slot", input.Slot)
+	tracer.AddProperty("moduleKind", input.ModuleKind)
+	tracer.AddProperty("operation", "GenerateKeys")
+	tracer.AddProperty("pq", input.PQ)
+
+	createInput := CreateInput{
+		ModuleKind: input.ModuleKind,
+	}
+	digitalSignatureManager, createErr := d.digitalSignatureManagerFactory.Create(ctx, createInput)
+	if createErr != nil {
+		return nil, createErr
+	}
+
+	result := make([]GeneratedKey, 0)
+
+	// 1) Always generate one ECDSA key-pair.
+	ecdsaGenerateInput := signaturemanager.GenerateKeyInput{
+		Slot:      input.Slot,
+		Pin:       input.Pin,
+		Tracer:    tracer,
+		Algorithm: signaturemanager.KeyAlgorithmECDSAsecp256k1,
+	}
+	ecdsaOut, ecdsaErr := digitalSignatureManager.GenerateKey(ctx, ecdsaGenerateInput)
+	if ecdsaErr != nil {
+		if signaturemanager.IsInvalidSlotError(ecdsaErr) {
+			msg := fmt.Sprintf("the slot '%s' is not reachable in the HSM module", input.Slot)
+			return nil, errors.PreconditionFailedFromErr(ecdsaErr).WithMessage(msg).SetHumanReadableMessage(msg)
+		}
+		return nil, errors.InternalFromErr(ecdsaErr)
+	}
+	tracer.Debugf("generated ECDSA address: '%s'", ecdsaOut.Address.String())
+	result = append(result, GeneratedKey{
+		Type:      KeyGenerationKindECDSA,
+		Algorithm: string(signaturemanager.KeyAlgorithmECDSAsecp256k1),
+		Address:   &ecdsaOut.Address,
+	})
+
+	// 2) Optionally generate PQ keys.
+	if input.PQ {
+		for _, algo := range input.Algorithms {
+			pqGenerateInput := signaturemanager.GenerateKeyInput{
+				Slot:      input.Slot,
+				Pin:       input.Pin,
+				Tracer:    tracer,
+				Algorithm: signaturemanager.KeyAlgorithmKind(algo),
+			}
+			pqOut, pqErr := digitalSignatureManager.GenerateKey(ctx, pqGenerateInput)
+			if pqErr != nil {
+				// If a PQ algorithm is not supported or fails, bubble up as internal error for now.
+				return nil, errors.InternalFromErr(pqErr)
+			}
+			result = append(result, GeneratedKey{
+				Type:      KeyGenerationKindPQ,
+				Algorithm: algo,
+				PublicKey: pqOut.PublicKey,
+				Label:     pqOut.Label,
+			})
+		}
+	}
+
+	return &GenerateKeysOutput{Keys: result}, nil
 }
 
 func (d DefaultUseCase) RemoveAddress(ctx context.Context, input RemoveAddressInput) (*RemoveAddressOutput, error) {
