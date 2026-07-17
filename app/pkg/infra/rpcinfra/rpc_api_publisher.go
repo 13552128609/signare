@@ -6,10 +6,11 @@ import (
 
 // JSON-RPC supported methods by the signare
 const (
-	generateAccountMethod = "eth_generateAccount"
-	removeAccountMethod   = "eth_removeAccount"
-	listAccountsMethod    = "eth_accounts"
-	signTransactionMethod = "eth_signTransaction"
+	generateAccountMethod     = "eth_generateAccount"
+	generateAccountsV2Method  = "eth_generateAccountsV2"
+	removeAccountMethod       = "eth_removeAccount"
+	listAccountsMethod        = "eth_accounts"
+	signTransactionMethod     = "eth_signTransaction"
 )
 
 // JSONRPCAPIPublisherOptions options to create a JSONRPCAPIRoutesPublished.
@@ -33,6 +34,10 @@ func ProvideJSONRPCMethods(options JSONRPCAPIPublisherOptions) (JSONRPCAPIRoutes
 	// Register RPC handlers
 	var err error
 	err = options.RPCRouter.RegisterRPCHandlerFunc(generateAccountMethod, options.Handler.HandleGenerateAccount)
+	if err != nil {
+		return 0, err
+	}
+	err = options.RPCRouter.RegisterRPCHandlerFunc(generateAccountsV2Method, options.Handler.HandleGenerateAccountsV2)
 	if err != nil {
 		return 0, err
 	}
