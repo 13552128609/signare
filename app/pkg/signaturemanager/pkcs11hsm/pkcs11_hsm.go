@@ -23,6 +23,11 @@ import (
 
 const (
 	standard = "PKCS#11"
+
+	ckMMLDSAKeyPairGen = 0x0000001C
+	ckaParameterSet    = 0x0000061D
+	ckpMLDSA44         = 1
+	ckpMLDSA65         = 2
 )
 
 // PKCS11HSMSignatureManager implements the DigitalSignatureManager interface.
@@ -141,9 +146,61 @@ func (s *PKCS11HSMSignatureManager) GenerateKey(_ context.Context, input signatu
 		}, nil
 
 	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
-		// Placeholder for PQ algorithms using SoftHSMv2 via PKCS#11.
-		// The concrete mechanism IDs and templates must be provided by the PQ-enabled module.
-		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported PQ algorithm: %s", alg))
+		// ML-DSA family using CKM_ML_DSA_KEY_PAIR_GEN + CKA_PARAMETER_SET.
+		// We distinguish algorithms via CKA_PARAMETER_SET and label prefix.
+		var (
+			paramSet    uint
+			labelPrefix string
+		)
+		switch alg {
+		case signaturemanager.KeyAlgorithmMLDSA44:
+			paramSet = ckpMLDSA44
+			labelPrefix = "MLDSA44-"
+		case signaturemanager.KeyAlgorithmMLDSA65:
+			paramSet = ckpMLDSA65
+			labelPrefix = "MLDSA65-"
+		}
+
+		timestamp := generateTimestampId()
+		lb := labelPrefix + base64.StdEncoding.EncodeToString(timestamp)
+
+		// Public key template
+		publicKeyTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
+			pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
+			pkcs11.NewAttribute(ckaParameterSet, paramSet),
+		}
+
+		// Private key template
+		privateKeyTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, lb),
+			pkcs11.NewAttribute(pkcs11.CKA_ID, timestamp),
+		}
+
+		tracer.Debugf("generating %s key pair", alg)
+		publicKeyHandle, privateKeyHandle, err := s.pkcsContext.GenerateKeyPair(
+			session,
+			[]*pkcs11.Mechanism{pkcs11.NewMechanism(ckMMLDSAKeyPairGen, nil)},
+			publicKeyTemplate,
+			privateKeyTemplate,
+		)
+		if err != nil {
+			return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("error generating %s key: %v", alg, err))
+		}
+
+		tracer.Debugf("generated %s key pair (pubHandle=%d, privHandle=%d, label=%s)", alg, publicKeyHandle, privateKeyHandle, lb)
+
+		// For PQ keys we currently expose only the label. PublicKey bytes can be
+		// added later if needed by querying an appropriate attribute.
+		return &signaturemanager.GenerateKeyOutput{
+			Label: lb,
+		}, nil
 
 	default:
 		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported algorithm: %s", alg))
