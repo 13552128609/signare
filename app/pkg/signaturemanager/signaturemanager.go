@@ -17,6 +17,8 @@ type DigitalSignatureManager interface {
 	Sign(ctx context.Context, input SignInput) (*SignOutput, error)
 	// Verify verifies a signature over a set of bytes with the key identified by the provided address.
 	Verify(ctx context.Context, input VerifyInput) (*VerifyOutput, error)
+	// GetPublicKey retrieves the public key for the given address and algorithm.
+	GetPublicKey(ctx context.Context, input GetPublicKeyInput) (*GetPublicKeyOutput, error)
 	// Close closes the connection and cleans up open resources.
 	Close(ctx context.Context, input CloseInput) (*CloseOutput, error)
 	// Open opens the connection to a digital signature manager provider.

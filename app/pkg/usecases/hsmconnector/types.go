@@ -218,6 +218,23 @@ type VerifyOutput struct {
 	PublicKey []byte
 }
 
+// GetPKInput for public key retrieval requests.
+type GetPKInput struct {
+	// SlotConnectionData configuration to connect to a slot.
+	SlotConnectionData
+	// From address identifying the key to use.
+	From address.Address `valid:"address"`
+	// Algorithm selects which algorithm should be used to locate the key.
+	// If empty, implementations should default to ECDSA (KeyAlgorithmECDSAsecp256k1).
+	Algorithm string `valid:"optional"`
+}
+
+// GetPKOutput for public key retrieval responses.
+type GetPKOutput struct {
+	// PublicKey is the raw public key bytes.
+	PublicKey []byte
+}
+
 // CloseAllInput input to close all the signature manager resources.
 type CloseAllInput struct {
 }

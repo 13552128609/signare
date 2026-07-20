@@ -401,6 +401,83 @@ func (s *PKCS11HSMSignatureManager) Verify(ctx context.Context, input signaturem
 	}, nil
 }
 
+func (s *PKCS11HSMSignatureManager) GetPublicKey(ctx context.Context, input signaturemanager.GetPublicKeyInput) (*signaturemanager.GetPublicKeyOutput, error) {
+	tracer := input.Tracer
+	slot, err := strconv.ParseUint(input.Slot, 10, 32)
+	if err != nil {
+		return nil, signaturemanager.NewInvalidSlotError().WithMessage(fmt.Sprintf("invalid slot: '%s'", input.Slot))
+	}
+
+	tracer.AddProperty("slot", slot)
+	tracer.AddProperty("standard", standard)
+	tracer.Debug("getting public key")
+
+	alg := input.Algorithm
+	if alg == "" {
+		alg = signaturemanager.KeyAlgorithmECDSAsecp256k1
+	}
+
+	session, err := s.pkcsContext.OpenSession(uint(slot), pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	if err != nil {
+		return nil, toSignatureManagerErr(err, "error opening PKCS11 session")
+	}
+	defer s.closeSession(tracer, session)
+
+	err = s.pkcsContext.Login(session, pkcs11.CKU_USER, input.Pin)
+	if err != nil {
+		return nil, toSignatureManagerErr(err, "error logging in with the PKCS11 session")
+	}
+	defer s.logOut(tracer, session)
+
+	// Determine label according to algorithm (same as verify/sign).
+	var publicKeyLabel string
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
+		publicKeyLabel = calculatePublicKeyLabel(input.From)
+	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
+		publicKeyLabel = fmt.Sprintf("PQ-%s-%s", string(alg), input.From.String())
+	default:
+		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported algorithm: %s", alg))
+	}
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, publicKeyLabel),
+	}
+	pub, err := s.findObject(session, template)
+	if err != nil {
+		if signaturemanager.IsNotFoundError(err) {
+			return nil, signaturemanager.NewNotFoundError().WithMessage(fmt.Sprintf("public key not found for address '%s' and algorithm '%s'. Error: %v", input.From.String(), alg, err))
+		}
+		return nil, err
+	}
+
+	// Retrieve public key bytes. ECDSA uses CKA_EC_POINT, PQ uses CKA_VALUE.
+	var pubKeyBytes []byte
+	if alg == signaturemanager.KeyAlgorithmECDSAsecp256k1 || alg == "" {
+		ecPoint, ecErr := s.getDecodedECPoint(session, *pub)
+		if ecErr == nil {
+			pubKeyBytes = ecPoint
+		}
+	} else {
+		attrTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+		}
+		attrs, attrErr := s.pkcsContext.GetAttributeValue(session, *pub, attrTemplate)
+		if attrErr == nil && len(attrs) > 0 && attrs[0].Value != nil {
+			value := attrs[0].Value
+			if len(value) > 0 {
+				pubKeyBytes = make([]byte, len(value))
+				copy(pubKeyBytes, value)
+			}
+		}
+	}
+
+	return &signaturemanager.GetPublicKeyOutput{
+		PublicKey: pubKeyBytes,
+	}, nil
+}
+
 func (s *PKCS11HSMSignatureManager) Close(_ context.Context, _ signaturemanager.CloseInput) (*signaturemanager.CloseOutput, error) {
 	err := s.pkcsContext.Finalize()
 	if err != nil {

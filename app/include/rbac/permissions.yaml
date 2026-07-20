@@ -50,4 +50,5 @@ permissions:
       - rpc.method.eth_signTransaction
       - rpc.method.eth_signTransactionV2
       - rpc.method.eth_verify
+      - rpc.method.eth_getpk
 

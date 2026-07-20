@@ -30,6 +30,8 @@ type HSMConnector interface {
 	SignTxV2(ctx context.Context, input SignTxV2Input) (*SignTxV2Output, error)
 	// Verify verifies a signature over arbitrary data using the key identified by (From, Algorithm).
 	Verify(ctx context.Context, input VerifyInput) (*VerifyOutput, error)
+	// GetPK retrieves the public key for the given (From, Algorithm).
+	GetPK(ctx context.Context, input GetPKInput) (*GetPKOutput, error)
 	// CloseAll closes all signature manager resources.
 	CloseAll(ctx context.Context, input CloseAllInput) (*CloseAllOutput, error)
 	// IsAlive checks the availability of a given slot.
@@ -557,6 +559,55 @@ func (d DefaultUseCase) Verify(ctx context.Context, input VerifyInput) (*VerifyO
 	return &VerifyOutput{
 		Result:    verifyOutput.Result,
 		PublicKey: verifyOutput.PublicKey,
+	}, nil
+}
+
+// GetPK retrieves the public key for the provided address and algorithm.
+func (d DefaultUseCase) GetPK(ctx context.Context, input GetPKInput) (*GetPKOutput, error) {
+	_, err := govalidator.ValidateStruct(input.SlotConnectionData)
+	if err != nil {
+		return nil, errors.InvalidArgumentFromErr(err).SetHumanReadableMessage("couldn't validate input data")
+	}
+	if input.From.IsEmpty() {
+		return nil, errors.InvalidArgument().SetHumanReadableMessage("field 'from' cannot be empty")
+	}
+
+	tracer := logger.NewTracer(ctx)
+	tracer.AddProperty("slot", input.Slot)
+	tracer.AddProperty("moduleKind", input.ModuleKind)
+	tracer.AddProperty("operation", "GetPK")
+
+	alg := input.Algorithm
+	if alg == "" {
+		alg = string(signaturemanager.KeyAlgorithmECDSAsecp256k1)
+	}
+
+	createInput := CreateInput{
+		ModuleKind: input.ModuleKind,
+	}
+	digitalSignatureManager, createErr := d.digitalSignatureManagerFactory.Create(ctx, createInput)
+	if createErr != nil {
+		return nil, errors.InternalFromErr(createErr).WithMessage("error getting public key: %s", createErr.Error())
+	}
+
+	pkInput := signaturemanager.GetPublicKeyInput{
+		Slot:      input.Slot,
+		Pin:       input.Pin,
+		Tracer:    tracer,
+		From:      input.From,
+		Algorithm: signaturemanager.KeyAlgorithmKind(alg),
+	}
+	pkOutput, pkErr := digitalSignatureManager.GetPublicKey(ctx, pkInput)
+	if pkErr != nil {
+		if signaturemanager.IsInvalidSlotError(pkErr) {
+			msg := fmt.Sprintf("the slot '%s' is not reachable in the HSM module", input.Slot)
+			return nil, errors.PreconditionFailedFromErr(pkErr).WithMessage(msg).SetHumanReadableMessage(msg)
+		}
+		return nil, errors.InternalFromErr(pkErr)
+	}
+
+	return &GetPKOutput{
+		PublicKey: pkOutput.PublicKey,
 	}, nil
 }
 

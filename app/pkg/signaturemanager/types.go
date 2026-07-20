@@ -125,6 +125,26 @@ type VerifyOutput struct {
 	PublicKey []byte
 }
 
+// GetPublicKeyInput for retrieving public keys.
+type GetPublicKeyInput struct {
+	// Slot the slot to look for the keys
+	Slot string
+	// Pin the pin to authorize the user
+	Pin string
+	// Tracer to log what is needed
+	Tracer logger.Tracer
+	// From address identifying the key to use.
+	From address.Address
+	// Algorithm selects which algorithm should be used to locate the key.
+	Algorithm KeyAlgorithmKind
+}
+
+// GetPublicKeyOutput for public key retrieval responses.
+type GetPublicKeyOutput struct {
+	// PublicKey is the raw public key bytes.
+	PublicKey []byte
+}
+
 // CloseInput input to close connection and clean up resources.
 type CloseInput struct {
 	// Tracer to log what is needed

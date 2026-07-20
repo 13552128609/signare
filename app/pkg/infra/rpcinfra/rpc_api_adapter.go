@@ -22,4 +22,6 @@ type JSONRPCAPIAdapter interface {
 	AdaptSignTxV2(ctx context.Context, data SignTXV2RequestParams) (*SignTXV2Response, *rpcerrors.RPCError)
 	// AdaptVerify adapts the verification of a signature over arbitrary data.
 	AdaptVerify(ctx context.Context, data VerifyRequestParams) (*VerifyResponse, *rpcerrors.RPCError)
+	// AdaptGetPK adapts retrieval of a public key for a given (from, algorithm).
+	AdaptGetPK(ctx context.Context, data GetPKRequestParams) (*GetPKResponse, *rpcerrors.RPCError)
 }

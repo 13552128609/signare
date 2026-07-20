@@ -353,6 +353,47 @@ func (adapter *DefaultAPIAdapter) AdaptVerify(ctx context.Context, data rpcinfra
 	return &response, nil
 }
 
+func (adapter *DefaultAPIAdapter) AdaptGetPK(ctx context.Context, data rpcinfra.GetPKRequestParams) (*rpcinfra.GetPKResponse, *rpcerrors.RPCError) {
+	byApplicationInput := hsmconnection.ByApplicationInput{
+		ApplicationID: data.ApplicationID,
+	}
+	hsmConnection, err := adapter.hsmConnectionResolver.ByApplication(ctx, byApplicationInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	getPKInput := hsmconnector.GetPKInput{
+		SlotConnectionData: hsmconnector.SlotConnectionData{
+			Pin:        hsmConnection.Pin,
+			Slot:       hsmConnection.Slot,
+			ModuleKind: hsmconnector.ModuleKind(hsmConnection.ModuleKind),
+			ChainID:    hsmConnection.ChainID,
+		},
+		Algorithm: data.Algorithm,
+	}
+
+	from, err := address.NewFromHexString(data.From)
+	if err != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [from]: %w", err))
+	}
+	getPKInput.From = from
+
+	out, err := adapter.hsmConnector.GetPK(ctx, getPKInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	pkHex := ""
+	if out.PublicKey != nil && len(out.PublicKey) > 0 {
+		pkHex = entities.NewHexBytes(out.PublicKey).String()
+	}
+
+	response := rpcinfra.GetPKResponse{
+		PK: pkHex,
+	}
+	return &response, nil
+}
+
 // DefaultAPIAdapter implements JSONRPCAPIAdapter.
 type DefaultAPIAdapter struct {
 	accountUseCase        user.AccountUseCase

@@ -198,6 +198,59 @@ type VerifyResponse struct {
 	PK string `json:"pk"`
 }
 
+// GetPKRequestParams request definition for eth_getpk.
+// It retrieves the public key for the given (from, algorithm).
+type GetPKRequestParams struct {
+	ApplicationID string
+	// From address identifying the key to use.
+	From string `json:"from"`
+	// Algorithm selects which algorithm should be used to locate the key.
+	// If empty, implementations should default to ECDSA (KeyAlgorithmECDSAsecp256k1).
+	Algorithm string `json:"algorithm,omitempty"`
+}
+
+func (p *GetPKRequestParams) SetParamsFrom(params []any) error {
+	if len(params) != 1 {
+		return fmt.Errorf("only one object is expected")
+	}
+	paramMap, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("params[0] must be an object")
+	}
+
+	fromParam, ok := paramMap["from"]
+	if !ok {
+		return errors.New("missing required field [from]")
+	}
+	from, ok := fromParam.(string)
+	if !ok {
+		return errors.New("[from] must be of type string")
+	}
+	p.From = from
+
+	if algParam, ok := paramMap["algorithm"]; ok {
+		alg, okStr := algParam.(string)
+		if !okStr {
+			return errors.New("[algorithm] must be of type string")
+		}
+		p.Algorithm = alg
+	}
+	return nil
+}
+
+func (p *GetPKRequestParams) ValidateParams() error {
+	if len(p.From) == 0 {
+		return errors.New("[from] cannot be nil")
+	}
+	return nil
+}
+
+// GetPKResponse response definition for eth_getpk.
+type GetPKResponse struct {
+	// PK is the public key for the given (from, algorithm), hex-encoded.
+	PK string `json:"pk"`
+}
+
 // ValidateParams validates the GenerateAccountsV2RequestParams.
 func (p *GenerateAccountsV2RequestParams) ValidateParams() error {
 	// If PQ is false, algorithms is ignored.
