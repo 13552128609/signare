@@ -464,11 +464,14 @@ func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer
 	switch alg {
 	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
 		mechanism = pkcs11.NewMechanism(pkcs11.CKM_ECDSA, nil)
-	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
-		// TODO: replace 0x0000001D with the concrete CKM_ML_DSA (or vendor-specific)
-		// signing mechanism once defined by the PKCS#11 module. This placeholder
-		// assumes the library is configured accordingly.
-		mechanism = pkcs11.NewMechanism(0x0000001D, nil)
+	case signaturemanager.KeyAlgorithmMLDSA44:
+		// CKM_ML_DSA_44 as defined in sign_pqc.py (vendor-defined mechanism).
+		const CKM_ML_DSA_44 = 0x80001001
+		mechanism = pkcs11.NewMechanism(CKM_ML_DSA_44, nil)
+	case signaturemanager.KeyAlgorithmMLDSA65:
+		// TODO: define the correct vendor-specific mechanism ID for ML-DSA-65
+		// once it is available in the PKCS#11 module.
+		mechanism = pkcs11.NewMechanism(0x80001002, nil)
 	default:
 		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported signing algorithm: %s", alg))
 	}
