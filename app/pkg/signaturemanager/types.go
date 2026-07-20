@@ -98,6 +98,33 @@ type SignOutput struct {
 	Signature []byte
 }
 
+// VerifyInput for signature verification requests.
+type VerifyInput struct {
+	// Slot the slot to look for the keys
+	Slot string
+	// Pin the pin to authorize the user
+	Pin string
+	// Tracer to log what is needed
+	Tracer logger.Tracer
+	// From address identifying the key to use.
+	From address.Address
+	// Data is the signed payload.
+	Data entities.HexBytes
+	// Signature is the raw signature bytes.
+	Signature []byte
+	// Algorithm selects which algorithm should be used for verification.
+	// If empty, implementations should default to KeyAlgorithmECDSAsecp256k1.
+	Algorithm KeyAlgorithmKind
+}
+
+// VerifyOutput for signature verification responses.
+type VerifyOutput struct {
+	// Result is true if the signature is valid for the given data and key.
+	Result bool
+	// PublicKey used for verification.
+	PublicKey []byte
+}
+
 // CloseInput input to close connection and clean up resources.
 type CloseInput struct {
 	// Tracer to log what is needed

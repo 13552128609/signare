@@ -195,6 +195,29 @@ type SignTxV2Output struct {
 	Signature *string
 }
 
+// VerifyInput for signature verification requests.
+type VerifyInput struct {
+	// SlotConnectionData configuration to connect to a slot.
+	SlotConnectionData
+	// From address identifying the key to use.
+	From address.Address `valid:"address"`
+	// Data is the signed payload.
+	Data entities.HexBytes
+	// Signature is the raw signature bytes.
+	Signature []byte
+	// Algorithm selects which algorithm should be used for verification.
+	// If empty, implementations should default to ECDSA (KeyAlgorithmECDSAsecp256k1).
+	Algorithm string `valid:"optional"`
+}
+
+// VerifyOutput for signature verification responses.
+type VerifyOutput struct {
+	// Result is true if the signature is valid for the given data and key.
+	Result bool
+	// PublicKey used for verification.
+	PublicKey []byte
+}
+
 // CloseAllInput input to close all the signature manager resources.
 type CloseAllInput struct {
 }

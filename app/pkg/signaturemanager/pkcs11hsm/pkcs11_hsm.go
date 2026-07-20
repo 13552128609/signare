@@ -374,6 +374,33 @@ func (s *PKCS11HSMSignatureManager) Sign(ctx context.Context, input signatureman
 	}, nil
 }
 
+func (s *PKCS11HSMSignatureManager) Verify(ctx context.Context, input signaturemanager.VerifyInput) (*signaturemanager.VerifyOutput, error) {
+	tracer := input.Tracer
+	slot, err := strconv.ParseUint(input.Slot, 10, 32)
+	if err != nil {
+		return nil, signaturemanager.NewInvalidSlotError().WithMessage(fmt.Sprintf("invalid slot: '%s'", input.Slot))
+	}
+
+	tracer.AddProperty("slot", slot)
+	tracer.AddProperty("standard", standard)
+	tracer.Debug("verifying signature")
+
+	// Default to ECDSA if no algorithm is provided.
+	alg := input.Algorithm
+	if alg == "" {
+		alg = signaturemanager.KeyAlgorithmECDSAsecp256k1
+	}
+
+	result, pubKey, err := s.verify(ctx, tracer, uint(slot), input.Pin, input.Data[:], input.Signature, input.From, alg)
+	if err != nil {
+		return nil, err
+	}
+	return &signaturemanager.VerifyOutput{
+		Result:    result,
+		PublicKey: pubKey,
+	}, nil
+}
+
 func (s *PKCS11HSMSignatureManager) Close(_ context.Context, _ signaturemanager.CloseInput) (*signaturemanager.CloseOutput, error) {
 	err := s.pkcsContext.Finalize()
 	if err != nil {
@@ -489,6 +516,88 @@ func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer
 		return nil, toSignatureManagerErr(err).WithMessage(fmt.Sprintf("error signing data: %v", err))
 	}
 	return sig, nil
+}
+
+// verify performs the low-level PKCS#11 verification using the public key
+// associated with the given address and algorithm.
+func (s *PKCS11HSMSignatureManager) verify(_ context.Context, tracer logger.Tracer, slot uint, pin string, payloadToVerify []byte, signature []byte, addr address.Address, alg signaturemanager.KeyAlgorithmKind) (bool, []byte, error) {
+	tracer.AddProperty("slot", slot)
+	tracer.AddProperty("address", addr.String())
+	tracer.AddProperty("standard", standard)
+	session, err := s.pkcsContext.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	if err != nil {
+		return false, nil, toSignatureManagerErr(err, "error opening PKCS11 session")
+	}
+	defer s.closeSession(tracer, session)
+
+	err = s.pkcsContext.Login(session, pkcs11.CKU_USER, pin)
+	if err != nil {
+		return false, nil, toSignatureManagerErr(err, "error logging in with the PKCS11 session")
+	}
+	defer s.logOut(tracer, session)
+
+	tracer.Debug("retrieving public key")
+	// Determine label according to algorithm (mirror GenerateKey and sign()).
+	var publicKeyLabel string
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
+		publicKeyLabel = calculatePublicKeyLabel(addr)
+	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
+		publicKeyLabel = fmt.Sprintf("PQ-%s-%s", string(alg), addr.String())
+	default:
+		return false, nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported verification algorithm: %s", alg))
+	}
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, publicKeyLabel),
+	}
+	pub, err := s.findObject(session, template)
+	if err != nil {
+		if signaturemanager.IsNotFoundError(err) {
+			return false, nil, signaturemanager.NewNotFoundError().WithMessage(fmt.Sprintf("public key not found for address '%s' and algorithm '%s'. Error: %v", addr.String(), alg, err))
+		}
+		return false, nil, err
+	}
+
+	tracer.Debug("selecting mechanism for verify")
+	var mechanism *pkcs11.Mechanism
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
+		mechanism = pkcs11.NewMechanism(pkcs11.CKM_ECDSA, nil)
+	case signaturemanager.KeyAlgorithmMLDSA44:
+		const CKM_ML_DSA_44 = 0x80001001
+		mechanism = pkcs11.NewMechanism(CKM_ML_DSA_44, nil)
+	case signaturemanager.KeyAlgorithmMLDSA65:
+		mechanism = pkcs11.NewMechanism(0x80001002, nil)
+	default:
+		return false, nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported verification algorithm: %s", alg))
+	}
+
+	err = s.pkcsContext.VerifyInit(session, []*pkcs11.Mechanism{mechanism}, *pub)
+	if err != nil {
+		return false, nil, toSignatureManagerErr(err).WithMessage(fmt.Sprintf("error initializing verification: %v", err))
+	}
+	err = s.pkcsContext.Verify(session, payloadToVerify, signature)
+	if err != nil {
+		// CKR_SIGNATURE_INVALID should be treated as a negative result, not an internal error.
+		var pkcs11Err pkcs11.Error
+		if errors.As(err, &pkcs11Err) && pkcs11Err == pkcs11.CKR_SIGNATURE_INVALID {
+			return false, nil, nil
+		}
+		return false, nil, toSignatureManagerErr(err).WithMessage(fmt.Sprintf("error verifying data: %v", err))
+	}
+
+	// Optionally retrieve the public key bytes. For ECDSA we can use CKA_EC_POINT.
+	var pubKeyBytes []byte
+	if alg == signaturemanager.KeyAlgorithmECDSAsecp256k1 || alg == "" {
+		ecPoint, ecErr := s.getDecodedECPoint(session, *pub)
+		if ecErr == nil {
+			pubKeyBytes = ecPoint
+		}
+	}
+
+	return true, pubKeyBytes, nil
 }
 
 // setLabel sets the label for the given object.

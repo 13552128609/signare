@@ -28,6 +28,8 @@ type HSMConnector interface {
 	SignTx(ctx context.Context, input SignTxInput) (*SignTxOutput, error)
 	// SignTxV2 signs an Ethereum transaction with support for multiple algorithms.
 	SignTxV2(ctx context.Context, input SignTxV2Input) (*SignTxV2Output, error)
+	// Verify verifies a signature over arbitrary data using the key identified by (From, Algorithm).
+	Verify(ctx context.Context, input VerifyInput) (*VerifyOutput, error)
 	// CloseAll closes all signature manager resources.
 	CloseAll(ctx context.Context, input CloseAllInput) (*CloseAllOutput, error)
 	// IsAlive checks the availability of a given slot.
@@ -446,11 +448,32 @@ func (d DefaultUseCase) SignTxV2(ctx context.Context, input SignTxV2Input) (*Sig
 		if legacyErr != nil {
 			return nil, legacyErr
 		}
+		// Additionally, produce a raw ECDSA signature over the txHash so that
+		// callers of eth_signTransactionV2 can also obtain a detached signature
+		// for verification APIs.
+		signInput := signaturemanager.SignInput{
+			Slot:      input.Slot,
+			Pin:       input.Pin,
+			Tracer:    tracer,
+			From:      input.From,
+			Data:      *payload,
+			Algorithm: signaturemanager.KeyAlgorithmECDSAsecp256k1,
+		}
+		signOutput, signErr := digitalSignatureManager.Sign(ctx, signInput)
+		if signErr != nil {
+			if signaturemanager.IsInvalidSlotError(signErr) {
+				msg := fmt.Sprintf("the slot '%s' is not reachable in the HSM module", input.Slot)
+				return nil, errors.PreconditionFailedFromErr(signErr).WithMessage(msg).SetHumanReadableMessage(msg)
+			}
+			return nil, errors.InternalFromErr(signErr)
+		}
 		txHashHex := payload.String()
+		sigHex := entities.NewHexBytes(signOutput.Signature).String()
 		return &SignTxV2Output{
 			SignedTx: &legacyOut.SignedTx,
 			TxHash:   txHashHex,
 			Algorithm: algorithm,
+			Signature: &sigHex,
 		}, nil
 	}
 
@@ -480,6 +503,60 @@ func (d DefaultUseCase) SignTxV2(ctx context.Context, input SignTxV2Input) (*Sig
 		TxHash:   txHashHex,
 		Algorithm: algorithm,
 		Signature: &sigHex,
+	}, nil
+}
+
+// Verify checks whether the given signature is valid for the provided data and key.
+// It uses the same deterministic labeling scheme as SignTxV2 to locate the key
+// inside the HSM.
+func (d DefaultUseCase) Verify(ctx context.Context, input VerifyInput) (*VerifyOutput, error) {
+	_, err := govalidator.ValidateStruct(input.SlotConnectionData)
+	if err != nil {
+		return nil, errors.InvalidArgumentFromErr(err).SetHumanReadableMessage("couldn't validate input data")
+	}
+	if input.From.IsEmpty() {
+		return nil, errors.InvalidArgument().SetHumanReadableMessage("field 'from' cannot be empty")
+	}
+
+	tracer := logger.NewTracer(ctx)
+	tracer.AddProperty("slot", input.Slot)
+	tracer.AddProperty("moduleKind", input.ModuleKind)
+	tracer.AddProperty("operation", "Verify")
+
+	alg := input.Algorithm
+	if alg == "" {
+		alg = string(signaturemanager.KeyAlgorithmECDSAsecp256k1)
+	}
+
+	createInput := CreateInput{
+		ModuleKind: input.ModuleKind,
+	}
+	digitalSignatureManager, createErr := d.digitalSignatureManagerFactory.Create(ctx, createInput)
+	if createErr != nil {
+		return nil, errors.InternalFromErr(createErr).WithMessage("error verifying signature: %s", createErr.Error())
+	}
+
+	verifyInput := signaturemanager.VerifyInput{
+		Slot:      input.Slot,
+		Pin:       input.Pin,
+		Tracer:    tracer,
+		From:      input.From,
+		Data:      input.Data,
+		Signature: input.Signature,
+		Algorithm: signaturemanager.KeyAlgorithmKind(alg),
+	}
+	verifyOutput, verifyErr := digitalSignatureManager.Verify(ctx, verifyInput)
+	if verifyErr != nil {
+		if signaturemanager.IsInvalidSlotError(verifyErr) {
+			msg := fmt.Sprintf("the slot '%s' is not reachable in the HSM module", input.Slot)
+			return nil, errors.PreconditionFailedFromErr(verifyErr).WithMessage(msg).SetHumanReadableMessage(msg)
+		}
+		return nil, errors.InternalFromErr(verifyErr)
+	}
+
+	return &VerifyOutput{
+		Result:    verifyOutput.Result,
+		PublicKey: verifyOutput.PublicKey,
 	}, nil
 }
 

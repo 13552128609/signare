@@ -290,6 +290,61 @@ func (adapter *DefaultAPIAdapter) AdaptSignTxV2(ctx context.Context, data rpcinf
 	return &response, nil
 }
 
+func (adapter *DefaultAPIAdapter) AdaptVerify(ctx context.Context, data rpcinfra.VerifyRequestParams) (*rpcinfra.VerifyResponse, *rpcerrors.RPCError) {
+	byApplicationInput := hsmconnection.ByApplicationInput{
+		ApplicationID: data.ApplicationID,
+	}
+	hsmConnection, err := adapter.hsmConnectionResolver.ByApplication(ctx, byApplicationInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	verifyInput := hsmconnector.VerifyInput{
+		SlotConnectionData: hsmconnector.SlotConnectionData{
+			Pin:        hsmConnection.Pin,
+			Slot:       hsmConnection.Slot,
+			ModuleKind: hsmconnector.ModuleKind(hsmConnection.ModuleKind),
+			ChainID:    hsmConnection.ChainID,
+		},
+		Algorithm: data.Algorithm,
+	}
+
+	from, err := address.NewFromHexString(data.From)
+	if err != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [from]: %w", err))
+	}
+	verifyInput.From = from
+
+	if len(data.Data) == 0 {
+		emptyBytes := entities.NewHexBytes([]byte{})
+		verifyInput.Data = *emptyBytes
+	} else {
+		inputData, encodeDataErr := entities.NewHexBytesFromString(data.Data)
+		if encodeDataErr != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [data]: %w", encodeDataErr))
+		}
+		verifyInput.Data = inputData
+	}
+
+	// Signature is expected as hex string.
+	sigBytes, sigErr := entities.NewHexBytesFromString(data.Signature)
+	if sigErr != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [signature]: %w", sigErr))
+	}
+	verifyInput.Signature = sigBytes.Bytes()
+
+	out, err := adapter.hsmConnector.Verify(ctx, verifyInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	response := rpcinfra.VerifyResponse{
+		Result: out.Result,
+		PK:     entities.NewHexBytes(out.PublicKey).String(),
+	}
+	return &response, nil
+}
+
 // DefaultAPIAdapter implements JSONRPCAPIAdapter.
 type DefaultAPIAdapter struct {
 	accountUseCase        user.AccountUseCase

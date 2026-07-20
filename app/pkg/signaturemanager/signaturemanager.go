@@ -15,6 +15,8 @@ type DigitalSignatureManager interface {
 	ListKeys(ctx context.Context, input ListKeysInput) (*ListKeysOutput, error)
 	// Sign signs a set of bytes with the private key identified by the provided address.
 	Sign(ctx context.Context, input SignInput) (*SignOutput, error)
+	// Verify verifies a signature over a set of bytes with the key identified by the provided address.
+	Verify(ctx context.Context, input VerifyInput) (*VerifyOutput, error)
 	// Close closes the connection and cleans up open resources.
 	Close(ctx context.Context, input CloseInput) (*CloseOutput, error)
 	// Open opens the connection to a digital signature manager provider.

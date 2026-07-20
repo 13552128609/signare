@@ -20,4 +20,6 @@ type JSONRPCAPIAdapter interface {
 	AdaptSignTx(ctx context.Context, data SignTXRequestParams) (*string, *rpcerrors.RPCError)
 	// AdaptSignTxV2 adapts the signature of a transaction with support for multiple algorithms.
 	AdaptSignTxV2(ctx context.Context, data SignTXV2RequestParams) (*SignTXV2Response, *rpcerrors.RPCError)
+	// AdaptVerify adapts the verification of a signature over arbitrary data.
+	AdaptVerify(ctx context.Context, data VerifyRequestParams) (*VerifyResponse, *rpcerrors.RPCError)
 }
