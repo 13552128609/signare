@@ -591,9 +591,26 @@ func (s *PKCS11HSMSignatureManager) verify(_ context.Context, tracer logger.Trac
 	// Optionally retrieve the public key bytes. For ECDSA we can use CKA_EC_POINT.
 	var pubKeyBytes []byte
 	if alg == signaturemanager.KeyAlgorithmECDSAsecp256k1 || alg == "" {
+		// ECDSA: use EC point (uncompressed public key) as before.
 		ecPoint, ecErr := s.getDecodedECPoint(session, *pub)
 		if ecErr == nil {
 			pubKeyBytes = ecPoint
+		}
+	} else if alg == signaturemanager.KeyAlgorithmMLDSA44 || alg == signaturemanager.KeyAlgorithmMLDSA65 {
+		// PQ (ML-DSA-44/65): follow export_publicKey.py and read CKA_VALUE.
+		// This is best-effort: if anything fails, we simply leave pubKeyBytes
+		// empty instead of propagating an error.
+		attrTemplate := []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+		}
+		attrs, attrErr := s.pkcsContext.GetAttributeValue(session, *pub, attrTemplate)
+		if attrErr == nil && len(attrs) > 0 && attrs[0].Value != nil {
+			// Copy out the raw value bytes.
+			value := attrs[0].Value
+			if len(value) > 0 {
+				pubKeyBytes = make([]byte, len(value))
+				copy(pubKeyBytes, value)
+			}
 		}
 	}
 

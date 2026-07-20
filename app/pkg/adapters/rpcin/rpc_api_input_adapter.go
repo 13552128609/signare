@@ -338,9 +338,17 @@ func (adapter *DefaultAPIAdapter) AdaptVerify(ctx context.Context, data rpcinfra
 		return nil, adaptError(err)
 	}
 
+	// PublicKey may be nil or empty for some algorithms (e.g., current PQ
+	// implementations). In that case, return an empty string instead of
+	// attempting to hex-encode it to avoid nil dereference.
+	pkHex := ""
+	if out.PublicKey != nil && len(out.PublicKey) > 0 {
+		pkHex = entities.NewHexBytes(out.PublicKey).String()
+	}
+
 	response := rpcinfra.VerifyResponse{
 		Result: out.Result,
-		PK:     entities.NewHexBytes(out.PublicKey).String(),
+		PK:     pkHex,
 	}
 	return &response, nil
 }
