@@ -11,6 +11,7 @@ const (
 	removeAccountMethod       = "eth_removeAccount"
 	listAccountsMethod        = "eth_accounts"
 	signTransactionMethod     = "eth_signTransaction"
+	signTransactionV2Method   = "eth_signTransactionV2"
 )
 
 // JSONRPCAPIPublisherOptions options to create a JSONRPCAPIRoutesPublished.
@@ -50,6 +51,10 @@ func ProvideJSONRPCMethods(options JSONRPCAPIPublisherOptions) (JSONRPCAPIRoutes
 		return 0, err
 	}
 	err = options.RPCRouter.RegisterRPCHandlerFunc(signTransactionMethod, options.Handler.HandleSignTX)
+	if err != nil {
+		return 0, err
+	}
+	err = options.RPCRouter.RegisterRPCHandlerFunc(signTransactionV2Method, options.Handler.HandleSignTXV2)
 	if err != nil {
 		return 0, err
 	}

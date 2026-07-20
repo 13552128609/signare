@@ -160,6 +160,41 @@ type SignTxOutput struct {
 	Transaction EthereumTransaction
 }
 
+// SignTxV2Input for transaction signing requests with algorithm selection.
+type SignTxV2Input struct {
+	// SlotConnectionData configuration to connect to a slot.
+	SlotConnectionData
+	// From address.
+	From address.Address `valid:"address"`
+	// To address.
+	To *address.Address `valid:"optional"`
+	// Gas amount to use for transaction execution.
+	Gas *entities.HexUInt64 `valid:"optional"`
+	// GasPrice to use for each paid gas.
+	GasPrice *entities.HexInt256 `valid:"optional"`
+	// Value amount sent with this transaction.
+	Value *entities.HexInt256 `valid:"optional"`
+	// Data arguments packed according to JSON RPC standard.
+	Data entities.HexBytes // it can be empty (byte array of length 0) in eth-transfers
+	// Nonce integer to identify request.
+	Nonce entities.HexUInt64
+	// Algorithm selects which algorithm should be used for signing.
+	// If empty, implementations should default to ECDSA (KeyAlgorithmECDSAsecp256k1).
+	Algorithm string `valid:"optional"`
+}
+
+// SignTxV2Output for transaction signing responses with algorithm selection.
+type SignTxV2Output struct {
+	// SignedTx is the RLP-encoded Ethereum transaction when ECDSA is used.
+	SignedTx *string
+	// TxHash is the hash of the Ethereum transaction payload that was signed.
+	TxHash string
+	// Algorithm used for signing.
+	Algorithm string
+	// Signature is the raw signature (hex-encoded) for non-ECDSA algorithms.
+	Signature *string
+}
+
 // CloseAllInput input to close all the signature manager resources.
 type CloseAllInput struct {
 }

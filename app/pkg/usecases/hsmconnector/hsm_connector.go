@@ -26,6 +26,8 @@ type HSMConnector interface {
 	ListAddresses(ctx context.Context, input ListAddressesInput) (*ListAddressesOutput, error)
 	// SignTx signs an Ethereum transaction using the private key associated with the address specific in the "From" input attribute.
 	SignTx(ctx context.Context, input SignTxInput) (*SignTxOutput, error)
+	// SignTxV2 signs an Ethereum transaction with support for multiple algorithms.
+	SignTxV2(ctx context.Context, input SignTxV2Input) (*SignTxV2Output, error)
 	// CloseAll closes all signature manager resources.
 	CloseAll(ctx context.Context, input CloseAllInput) (*CloseAllOutput, error)
 	// IsAlive checks the availability of a given slot.
@@ -360,6 +362,124 @@ func (d DefaultUseCase) SignTx(ctx context.Context, input SignTxInput) (*SignTxO
 	return &SignTxOutput{
 		SignedTx:    result,
 		Transaction: transaction,
+	}, nil
+}
+
+// SignTxV2 behaves like SignTx but supports selecting the signing algorithm.
+// If Algorithm is empty or corresponds to ECDSA, it behaves like SignTx and
+// returns a standard Ethereum signed transaction (SignedTx) plus TxHash.
+// For PQ algorithms, it signs the same TxHash with the PQ private key and
+// returns TxHash and the raw signature, without constructing an Ethereum RLP
+// transaction.
+func (d DefaultUseCase) SignTxV2(ctx context.Context, input SignTxV2Input) (*SignTxV2Output, error) {
+	// Reuse validation rules from SignTxInput where applicable.
+	// We validate SlotConnectionData and From similarly.
+	if input.From.IsEmpty() {
+		return nil, errors.InvalidArgument().SetHumanReadableMessage("field 'from' cannot be empty")
+	}
+
+	tracer := logger.NewTracer(ctx)
+	tracer.AddProperty("slot", input.Slot)
+	tracer.AddProperty("moduleKind", input.ModuleKind)
+	tracer.AddProperty("operation", "SignTxV2")
+
+	gas := entities.NewHexUInt64(90000)
+	if input.Gas != nil {
+		gas = *input.Gas
+	}
+
+	defaultGasPrice := entities.NewHexInt256(big.NewInt(0))
+	gasPrice := *defaultGasPrice
+	if input.GasPrice != nil {
+		gasPrice = *input.GasPrice
+	}
+
+	chainID := entities.NewHexInt256(input.ChainID.BigInt())
+
+	createInput := CreateInput{
+		ModuleKind: input.ModuleKind,
+	}
+	digitalSignatureManager, createErr := d.digitalSignatureManagerFactory.Create(ctx, createInput)
+	if createErr != nil {
+		return nil, errors.InternalFromErr(createErr).WithMessage("error signing transaction: %s", createErr.Error())
+	}
+	if input.To == nil {
+		tracer.AddProperty("to", "null")
+	} else {
+		tracer.AddProperty("to", input.To.String())
+	}
+
+	transaction := EthereumTransaction{
+		From:     input.From,
+		To:       input.To,
+		Gas:      gas,
+		GasPrice: gasPrice,
+		Value:    input.Value,
+		Data:     input.Data,
+		Nonce:    input.Nonce,
+		ChainID:  *chainID,
+	}
+	payload, err := transaction.Hash()
+	if err != nil {
+		return nil, err
+	}
+
+	// Decide algorithm. Empty means ECDSA.
+	algorithm := input.Algorithm
+	if algorithm == "" {
+		algorithm = string(signaturemanager.KeyAlgorithmECDSAsecp256k1)
+	}
+
+	// ECDSA path: delegate to existing SignTx to keep Ethereum semantics.
+	if algorithm == string(signaturemanager.KeyAlgorithmECDSAsecp256k1) {
+		legacyInput := SignTxInput{
+			SlotConnectionData: input.SlotConnectionData,
+			From:             input.From,
+			To:               input.To,
+			Gas:              input.Gas,
+			GasPrice:         input.GasPrice,
+			Value:            input.Value,
+			Data:             input.Data,
+			Nonce:            input.Nonce,
+		}
+		legacyOut, legacyErr := d.SignTx(ctx, legacyInput)
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		txHashHex := payload.String()
+		return &SignTxV2Output{
+			SignedTx: &legacyOut.SignedTx,
+			TxHash:   txHashHex,
+			Algorithm: algorithm,
+		}, nil
+	}
+
+	// PQ (or other non-ECDSA) path: sign payload using the selected algorithm
+	// and return raw signature and txHash.
+	signInput := signaturemanager.SignInput{
+		Slot:      input.Slot,
+		Pin:       input.Pin,
+		Tracer:    tracer,
+		From:      input.From,
+		Data:      *payload,
+		Algorithm: signaturemanager.KeyAlgorithmKind(algorithm),
+	}
+	signOutput, signErr := digitalSignatureManager.Sign(ctx, signInput)
+	if signErr != nil {
+		if signaturemanager.IsInvalidSlotError(signErr) {
+			msg := fmt.Sprintf("the slot '%s' is not reachable in the HSM module", input.Slot)
+			return nil, errors.PreconditionFailedFromErr(signErr).WithMessage(msg).SetHumanReadableMessage(msg)
+		}
+		return nil, errors.InternalFromErr(signErr)
+	}
+
+	txHashHex := payload.String()
+	sigHex := entities.NewHexBytes(signOutput.Signature).String()
+	return &SignTxV2Output{
+		SignedTx: nil,
+		TxHash:   txHashHex,
+		Algorithm: algorithm,
+		Signature: &sigHex,
 	}, nil
 }
 

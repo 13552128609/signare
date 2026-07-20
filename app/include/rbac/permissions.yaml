@@ -48,4 +48,5 @@ permissions:
     description: Grants access to sign transactions
     actions:
       - rpc.method.eth_signTransaction
+      - rpc.method.eth_signTransactionV2
 

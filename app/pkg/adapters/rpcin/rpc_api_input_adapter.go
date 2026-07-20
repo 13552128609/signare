@@ -198,6 +198,98 @@ func (adapter *DefaultAPIAdapter) AdaptSignTx(ctx context.Context, data rpcinfra
 	return &response, nil
 }
 
+func (adapter *DefaultAPIAdapter) AdaptSignTxV2(ctx context.Context, data rpcinfra.SignTXV2RequestParams) (*rpcinfra.SignTXV2Response, *rpcerrors.RPCError) {
+	byApplicationInput := hsmconnection.ByApplicationInput{
+		ApplicationID: data.ApplicationID,
+	}
+	hsmConnection, err := adapter.hsmConnectionResolver.ByApplication(ctx, byApplicationInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	signTxInput := hsmconnector.SignTxV2Input{
+		SlotConnectionData: hsmconnector.SlotConnectionData{
+			Pin:        hsmConnection.Pin,
+			Slot:       hsmConnection.Slot,
+			ModuleKind: hsmconnector.ModuleKind(hsmConnection.ModuleKind),
+			ChainID:    hsmConnection.ChainID,
+		},
+		Algorithm: data.Algorithm,
+	}
+	if len(data.Data) == 0 {
+		emptyBytes := entities.NewHexBytes([]byte{})
+		signTxInput.Data = *emptyBytes
+	} else {
+		inputData, encodeDataErr := entities.NewHexBytesFromString(data.Data)
+		if encodeDataErr != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [data]: %w", encodeDataErr))
+		}
+		signTxInput.Data = inputData
+	}
+
+
+	nonce, err := entities.NewHexUInt64FromString(data.Nonce)
+	if err != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [nonce]: %w", err))
+	}
+	signTxInput.Nonce = nonce
+
+	from, err := address.NewFromHexString(data.From)
+	if err != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [from]: %w", err))
+	}
+	signTxInput.From = from
+
+	if data.To != nil {
+		to, errTo := address.NewFromHexString(*data.To)
+		if errTo != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [to]: %w", errTo))
+		}
+		signTxInput.To = &to
+	}
+
+	if data.Gas != nil {
+		gas, errGas := entities.NewHexUInt64FromString(*data.Gas)
+		if errGas != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [gas]: %w", errGas))
+		}
+		signTxInput.Gas = &gas
+	}
+
+	if data.GasPrice != nil {
+		gasPrice, errGasPrice := entities.NewHexInt256FromString(*data.GasPrice)
+		if errGasPrice != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [gasPrice]: %w", errGasPrice))
+		}
+		signTxInput.GasPrice = gasPrice
+	}
+
+	if data.Value != nil && len(*data.Value) > 0 {
+		value, errValue := entities.NewHexInt256FromString(*data.Value)
+		if errValue != nil {
+			return nil, rpcerrors.NewInvalidParamsFromErr(fmt.Errorf("invalid [value]: %w", errValue))
+		}
+		signTxInput.Value = value
+	}
+
+	out, err := adapter.hsmConnector.SignTxV2(ctx, signTxInput)
+	if err != nil {
+		return nil, adaptError(err)
+	}
+
+	response := rpcinfra.SignTXV2Response{
+		Algorithm: out.Algorithm,
+		TxHash:    out.TxHash,
+	}
+	if out.SignedTx != nil {
+		response.SignedTx = out.SignedTx
+	}
+	if out.Signature != nil {
+		response.Signature = out.Signature
+	}
+	return &response, nil
+}
+
 // DefaultAPIAdapter implements JSONRPCAPIAdapter.
 type DefaultAPIAdapter struct {
 	accountUseCase        user.AccountUseCase

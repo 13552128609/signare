@@ -18,4 +18,6 @@ type JSONRPCAPIAdapter interface {
 	AdaptListAccounts(ctx context.Context, data ListAccountsRequestParams) ([]string, *rpcerrors.RPCError)
 	// AdaptSignTx adapts the signature of a transaction with an Ethereum account.
 	AdaptSignTx(ctx context.Context, data SignTXRequestParams) (*string, *rpcerrors.RPCError)
+	// AdaptSignTxV2 adapts the signature of a transaction with support for multiple algorithms.
+	AdaptSignTxV2(ctx context.Context, data SignTXV2RequestParams) (*SignTXV2Response, *rpcerrors.RPCError)
 }

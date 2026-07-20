@@ -87,6 +87,9 @@ type SignInput struct {
 	From address.Address
 	// Data to sign.
 	Data entities.HexBytes
+	// Algorithm selects which algorithm should be used for signing.
+	// If empty, implementations should default to KeyAlgorithmECDSAsecp256k1.
+	Algorithm KeyAlgorithmKind
 }
 
 // SignOutput for transaction signing responses.

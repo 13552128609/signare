@@ -355,9 +355,14 @@ func (s *PKCS11HSMSignatureManager) Sign(ctx context.Context, input signatureman
 	tracer.AddProperty("standard", standard)
 	tracer.Debug("signing transaction")
 
-	sig, err := s.sign(ctx, tracer, uint(slot), input.Pin, input.Data[:], input.From)
-	if err != nil {
+	// Default to ECDSA if no algorithm is provided.
+	alg := input.Algorithm
+	if alg == "" {
+		alg = signaturemanager.KeyAlgorithmECDSAsecp256k1
+	}
 
+	sig, err := s.sign(ctx, tracer, uint(slot), input.Pin, input.Data[:], input.From, alg)
+	if err != nil {
 		return nil, err
 	}
 	return &signaturemanager.SignOutput{
@@ -409,9 +414,9 @@ func (s *PKCS11HSMSignatureManager) IsAlive(_ context.Context, input signaturema
 	}, nil
 }
 
-func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer, slot uint, pin string, payloadToSign []byte, address address.Address) ([]byte, error) {
+func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer, slot uint, pin string, payloadToSign []byte, addr address.Address, alg signaturemanager.KeyAlgorithmKind) ([]byte, error) {
 	tracer.AddProperty("slot", slot)
-	tracer.AddProperty("address", address.String())
+	tracer.AddProperty("address", addr.String())
 	tracer.AddProperty("standard", standard)
 	session, err := s.pkcsContext.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
@@ -426,7 +431,19 @@ func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer
 	defer s.logOut(tracer, session)
 
 	tracer.Debug("retrieving private key")
-	privateKeyLabel := calculatePrivateKeyLabel(address)
+
+	// Determine label according to algorithm.
+	var privateKeyLabel string
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
+		privateKeyLabel = calculatePrivateKeyLabel(addr)
+	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
+		// For PQ keys, labels were created as "PQ-<ALG>-<ADDRESS>" during key generation.
+		privateKeyLabel = fmt.Sprintf("PQ-%s-%s", string(alg), addr.String())
+	default:
+		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported signing algorithm: %s", alg))
+	}
+
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, privateKeyLabel),
@@ -434,13 +451,29 @@ func (s *PKCS11HSMSignatureManager) sign(_ context.Context, tracer logger.Tracer
 	private, err := s.findObject(session, template)
 	if err != nil {
 		if signaturemanager.IsNotFoundError(err) {
-			return nil, signaturemanager.NewNotFoundError().WithMessage(fmt.Sprintf("private key not found for address '%s'. Error: %v", address.String(), err))
+			return nil, signaturemanager.NewNotFoundError().WithMessage(fmt.Sprintf("private key not found for address '%s' and algorithm '%s'. Error: %v", addr.String(), alg, err))
 		}
 		return nil, err
 	}
 
 	tracer.Debug("signing")
-	err = s.pkcsContext.SignInit(session, []*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_ECDSA, nil)}, *private)
+	// Select PKCS#11 mechanism based on algorithm. For now, reuse CKM_ECDSA
+	// for the classical path and expect the HSM/PKCS#11 module to expose an
+	// appropriate ML-DSA mechanism for PQ algorithms.
+	var mechanism *pkcs11.Mechanism
+	switch alg {
+	case signaturemanager.KeyAlgorithmECDSAsecp256k1, "":
+		mechanism = pkcs11.NewMechanism(pkcs11.CKM_ECDSA, nil)
+	case signaturemanager.KeyAlgorithmMLDSA44, signaturemanager.KeyAlgorithmMLDSA65:
+		// TODO: replace 0x0000001D with the concrete CKM_ML_DSA (or vendor-specific)
+		// signing mechanism once defined by the PKCS#11 module. This placeholder
+		// assumes the library is configured accordingly.
+		mechanism = pkcs11.NewMechanism(0x0000001D, nil)
+	default:
+		return nil, signaturemanager.NewKeyGenerationError().WithMessage(fmt.Sprintf("unsupported signing algorithm: %s", alg))
+	}
+
+	err = s.pkcsContext.SignInit(session, []*pkcs11.Mechanism{mechanism}, *private)
 	if err != nil {
 		return nil, toSignatureManagerErr(err).WithMessage(fmt.Sprintf("error initializing signature: %v", err))
 	}

@@ -20,6 +20,8 @@ type JSONRPCAPIHandler interface {
 	HandleListAccounts(ctx context.Context, r RPCRequest) (any, *rpcerrors.RPCError)
 	// HandleSignTX handles the signature of a transaction with an Ethereum account.
 	HandleSignTX(ctx context.Context, r RPCRequest) (any, *rpcerrors.RPCError)
+	// HandleSignTXV2 handles the signature of a transaction with support for multiple algorithms.
+	HandleSignTXV2(ctx context.Context, r RPCRequest) (any, *rpcerrors.RPCError)
 }
 
 func (handler DefaultJSONRPCAPIHandler) HandleGenerateAccount(ctx context.Context, r RPCRequest) (any, *rpcerrors.RPCError) {
@@ -31,6 +33,32 @@ func (handler DefaultJSONRPCAPIHandler) HandleGenerateAccount(ctx context.Contex
 	reqParams.ApplicationID = *applicationID
 
 	out, rpcErr := handler.adapter.AdaptGenerateAccount(ctx, reqParams)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return &RPCResponse{
+		RPCVersion: SupportedRPCVersion,
+		ID:         r.ID,
+		Result:     out,
+	}, nil
+}
+
+func (handler DefaultJSONRPCAPIHandler) HandleSignTXV2(ctx context.Context, r RPCRequest) (any, *rpcerrors.RPCError) {
+	reqParams := SignTXV2RequestParams{}
+	if err := ProcessParams(r.Params, &reqParams); err != nil {
+		return nil, err
+	}
+	if err := reqParams.ValidateParams(); err != nil {
+		return nil, rpcerrors.NewInvalidParamsFromErr(err)
+	}
+
+	applicationID, err := requestcontext.ApplicationFromContext(ctx)
+	if err != nil {
+		return nil, rpcerrors.NewInternalFromErr(err)
+	}
+	reqParams.ApplicationID = *applicationID
+
+	out, rpcErr := handler.adapter.AdaptSignTxV2(ctx, reqParams)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}

@@ -64,6 +64,55 @@ func (p *GenerateAccountsV2RequestParams) SetParamsFrom(params []any) error {
 	return nil
 }
 
+// SignTXV2RequestParams extends SignTXRequestParams with an optional algorithm parameter.
+// If algorithm is empty, implementations should default to ECDSA (KeyAlgorithmECDSAsecp256k1).
+type SignTXV2RequestParams struct {
+	SignTXRequestParams
+	// Algorithm selects which algorithm should be used for signing.
+	Algorithm string `json:"algorithm,omitempty"`
+}
+
+func (p *SignTXV2RequestParams) SetParamsFrom(params []any) error {
+	// Reuse SignTXRequestParams parsing logic first.
+	if err := (&p.SignTXRequestParams).SetParamsFrom(params); err != nil {
+		return err
+	}
+	if len(params) != 1 {
+		return fmt.Errorf("only one object is expected")
+	}
+	paramMap, ok := params[0].(map[string]any)
+	if !ok {
+		return fmt.Errorf("params[0] must be an object")
+	}
+	if algParam, ok := paramMap["algorithm"]; ok {
+		alg, okStr := algParam.(string)
+		if !okStr {
+			return errors.New("[algorithm] must be of type string")
+		}
+		p.Algorithm = alg
+	}
+	return nil
+}
+
+func (p *SignTXV2RequestParams) ValidateParams() error {
+	return (&p.SignTXRequestParams).ValidateParams()
+}
+
+// SignTXV2Response is the response definition for eth_signTransactionV2.
+// It can return either a classical Ethereum signed transaction (ECDSA)
+// or a PQ signature over the same txHash, depending on the algorithm used.
+type SignTXV2Response struct {
+	// SignedTx is the RLP-encoded Ethereum transaction when ECDSA is used.
+	SignedTx *string `json:"signedTx,omitempty"`
+	// TxHash is the hash of the Ethereum transaction payload that was signed.
+	TxHash string `json:"txHash"`
+	// Algorithm used for signing (e.g. "ECDSA-secp256k1", "ML-DSA-44").
+	Algorithm string `json:"algorithm"`
+	// Signature is the raw signature (hex-encoded) for non-ECDSA algorithms.
+	// For ECDSA it may be empty, as the signature is already embedded in SignedTx.
+	Signature *string `json:"signature,omitempty"`
+}
+
 // ValidateParams validates the GenerateAccountsV2RequestParams.
 func (p *GenerateAccountsV2RequestParams) ValidateParams() error {
 	// If PQ is false, algorithms is ignored.
