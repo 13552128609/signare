@@ -29,6 +29,10 @@ type GenerateKeyInput struct {
 	// Algorithm selects which algorithm should be used for key generation.
 	// If empty, implementations should default to KeyAlgorithmECDSAsecp256k1.
 	Algorithm KeyAlgorithmKind
+	// OwnerAddress optionally identifies the Ethereum address that "owns" this key.
+	// It is mainly used for PQ keys so that labels can encode (address, algorithm)
+	// and later be resolved from (from, algorithm) without additional database state.
+	OwnerAddress *address.Address
 }
 
 // GenerateKeyOutput for account generation responses.

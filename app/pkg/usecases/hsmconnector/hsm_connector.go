@@ -137,7 +137,8 @@ func (d DefaultUseCase) GenerateKeys(ctx context.Context, input GenerateKeysInpu
 				Slot:      input.Slot,
 				Pin:       input.Pin,
 				Tracer:    tracer,
-				Algorithm: signaturemanager.KeyAlgorithmKind(algo),
+				Algorithm:    signaturemanager.KeyAlgorithmKind(algo),
+				OwnerAddress: &ecdsaOut.Address,
 			}
 			pqOut, pqErr := digitalSignatureManager.GenerateKey(ctx, pqGenerateInput)
 			if pqErr != nil {
@@ -147,6 +148,7 @@ func (d DefaultUseCase) GenerateKeys(ctx context.Context, input GenerateKeysInpu
 			result = append(result, GeneratedKey{
 				Type:      KeyGenerationKindPQ,
 				Algorithm: algo,
+				Address:   &ecdsaOut.Address,
 				PublicKey: pqOut.PublicKey,
 				Label:     pqOut.Label,
 			})

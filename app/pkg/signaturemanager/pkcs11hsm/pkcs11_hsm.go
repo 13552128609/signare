@@ -161,8 +161,23 @@ func (s *PKCS11HSMSignatureManager) GenerateKey(_ context.Context, input signatu
 			labelPrefix = "MLDSA65-"
 		}
 
-		timestamp := generateTimestampId()
-		lb := labelPrefix + base64.StdEncoding.EncodeToString(timestamp)
+		// Build label. If an owner address is provided, encode (algorithm, address)
+		// so that later we can resolve the key from (from, algorithm) without DB.
+		// Format: "PQ-<ALG>-<ADDRESS>" (e.g. PQ-ML-DSA-44-0x1234...)
+		var (
+			lb        string
+			timestamp []byte
+		)
+		if input.OwnerAddress != nil {
+			owner := input.OwnerAddress.String()
+			lb = fmt.Sprintf("PQ-%s-%s", string(alg), owner)
+			// still generate a timestamp ID for CKA_ID
+			timestamp = generateTimestampId()
+		} else {
+			// Fallback to previous timestamp-based label if no owner is provided
+			timestamp = generateTimestampId()
+			lb = labelPrefix + base64.StdEncoding.EncodeToString(timestamp)
+		}
 
 		// Public key template
 		publicKeyTemplate := []*pkcs11.Attribute{
