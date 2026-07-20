@@ -326,7 +326,11 @@ func (s *PKCS11HSMSignatureManager) ListKeys(_ context.Context, input signaturem
 		if getLabelErr != nil {
 			continue
 		}
-		addr, _ := s.getAddress(session, o)
+		addr, addrErr := s.getAddress(session, o)
+		if addrErr != nil || addr == nil {
+			// This may be a non-ECDSA key (e.g., PQ). Skip it for address listing.
+			continue
+		}
 		toCompare := calculatePublicKeyLabel(*addr)
 		if toCompare != *label {
 			continue
